@@ -1,0 +1,167 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Choisis ton locker</title>
+<meta name="robots" content="noindex">
+
+<!-- Librairies demandées par le widget officiel Mondial Relay -->
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jquery/2.2.4/jquery.min.js"></script>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="https://widget.mondialrelay.com/parcelshop-picker/jquery.plugin.mondialrelay.parcelshoppicker.min.js"></script>
+
+<style>
+  :root{
+    --bg:#f6f5f2; --card:#ffffff; --ink:#1d1d1f; --muted:#6b6b70; --line:#e4e2dc;
+    --accent:#1d1d1f; --accent-ink:#ffffff; --ok:#1f7a4d; --ok-bg:#e8f4ee; --warn:#9a5b00; --warn-bg:#fff4e0;
+  }
+  @media (prefers-color-scheme: dark){
+    :root{ --bg:#141416; --card:#1e1e21; --ink:#f2f2f2; --muted:#a3a3a8; --line:#33333a;
+      --accent:#f2f2f2; --accent-ink:#141416; --ok:#6fd3a0; --ok-bg:#16302a; --warn:#f0b45a; --warn-bg:#352a16; }
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);
+    font:16px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif}
+  .wrap{max-width:760px;margin:0 auto;padding:24px 16px 48px}
+  h1{font-size:1.5rem;margin:0 0 4px;letter-spacing:-.01em}
+  .sub{color:var(--muted);margin:0 0 20px}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:18px;margin-bottom:16px}
+  .step{display:flex;align-items:center;gap:10px;font-weight:600;margin-bottom:10px}
+  .num{width:26px;height:26px;border-radius:50%;background:var(--accent);color:var(--accent-ink);
+    display:inline-flex;align-items:center;justify-content:center;font-size:.85rem}
+  #Zone_Widget{min-height:420px;color:#1d1d1f;background:#fff;border-radius:10px;overflow:hidden}
+  .choice{display:none;border-radius:10px;padding:14px;background:var(--ok-bg);color:var(--ok);margin-top:12px}
+  .choice strong{display:block;color:var(--ink)}
+  .choice .addr{color:var(--ink);opacity:.85}
+  .alert{display:none;border-radius:10px;padding:12px 14px;background:var(--warn-bg);color:var(--warn);margin-top:12px}
+  .btn{display:block;width:100%;text-align:center;padding:15px 18px;border-radius:12px;border:0;
+    background:var(--accent);color:var(--accent-ink);font-size:1.05rem;font-weight:600;cursor:pointer;text-decoration:none}
+  .btn[aria-disabled="true"]{opacity:.35;pointer-events:none}
+  .note{color:var(--muted);font-size:.9rem;margin:10px 0 0}
+  ul.tips{margin:6px 0 0;padding-left:18px;color:var(--muted);font-size:.92rem}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Choisis ton locker Mondial Relay</h1>
+  <p class="sub">Ton colis sera livré dans le locker de ton choix, accessible 24h/24 avec un code.</p>
+
+  <div class="card">
+    <div class="step"><span class="num">1</span>Cherche avec ton code postal et clique sur un locker</div>
+    <div id="Zone_Widget"></div>
+    <input type="hidden" id="Retour_Widget">
+    <div class="alert" id="alert"></div>
+    <div class="choice" id="choice" aria-live="polite">
+      ✔ Locker choisi
+      <strong id="c-name"></strong>
+      <span class="addr" id="c-addr"></span>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="step"><span class="num">2</span>Passe au paiement</div>
+    <a class="btn" id="pay" href="#" aria-disabled="true">Choisis d'abord un locker</a>
+    <ul class="tips">
+      <li>Sur la page de paiement, remplis comme d'habitude ta <b>référence</b>, ton <b>pseudo</b>, ton nom, ton téléphone et ton adresse.</li>
+      <li>Le locker choisi est transmis automatiquement avec ta commande.</li>
+    </ul>
+  </div>
+</div>
+
+<script>
+/* ===================== RÉGLAGES (à modifier ici uniquement) ===================== */
+var CONFIG = {
+  // Code enseigne Mondial Relay (8 caractères, compléter avec des espaces à droite).
+  // "BDTEST  " = code de test : la carte marche mais affiche un avertissement.
+  BRAND: "CC23MH6K",
+
+  // Liens de paiement Stripe. Le lien utilisé dépend du paramètre ?offre= dans l'adresse de cette page.
+  LIENS: {
+    a: "https://buy.stripe.com/eVq3cv7Bs3Px6Jk700cQU0a", // Référence + Speudo (lien principal)
+    b: "https://buy.stripe.com/cNi28r8Fweub5Fg3NOcQU00"  // Références produits + Speudo
+  },
+  OFFRE_PAR_DEFAUT: "a",
+
+  // Pays proposés dans la recherche
+  PAYS: "FR,BE,LU,ES,DE,IT,NL,PT",
+
+  // "APM" = uniquement les lockers. Mettre "24R" pour afficher aussi les Points Relais classiques.
+  MODE: "APM"
+};
+/* ================================================================================ */
+
+(function(){
+  var params = new URLSearchParams(location.search);
+  var offre = (params.get("offre") || CONFIG.OFFRE_PAR_DEFAUT).toLowerCase();
+  var lienStripe = CONFIG.LIENS[offre] || CONFIG.LIENS[CONFIG.OFFRE_PAR_DEFAUT];
+  var cp = (params.get("cp") || "").replace(/[^0-9A-Za-z]/g, "");
+
+  var payBtn = document.getElementById("pay");
+  var alertBox = document.getElementById("alert");
+
+  function showAlert(msg){ alertBox.textContent = msg; alertBox.style.display = msg ? "block" : "none"; }
+
+  // Construit la référence transmise à Stripe : uniquement lettres, chiffres et tirets (règle Stripe).
+  function refLocker(data){
+    var pays = String(data.Pays || "FR").toUpperCase().replace(/[^A-Z]/g, "").slice(0,2) || "FR";
+    var id = String(data.ID || "").replace(/[^0-9A-Za-z]/g, "");
+    return id ? ("LOCKER-" + pays + "-" + id) : "";
+  }
+
+  function setChoice(data){
+    var ref = refLocker(data);
+    if(!ref){ return; }
+    var nom = String(data.Nom || "").trim();
+    var estLocker = /locker/i.test(nom) || CONFIG.MODE === "APM";
+
+    document.getElementById("c-name").textContent = nom + "  (" + ref.replace("LOCKER-","") + ")";
+    document.getElementById("c-addr").textContent =
+      [data.Adresse1, data.Adresse2, (data.CP || "") + " " + (data.Ville || "")]
+        .map(function(s){ return String(s || "").trim(); }).filter(Boolean).join(", ");
+    document.getElementById("choice").style.display = "block";
+
+    if(!estLocker){
+      showAlert("Ce point n'est pas un locker. Choisis de préférence un point dont le nom commence par « LOCKER ».");
+    } else {
+      showAlert("");
+    }
+
+    var url = lienStripe + (lienStripe.indexOf("?") === -1 ? "?" : "&") +
+              "client_reference_id=" + encodeURIComponent(ref);
+    payBtn.href = url;
+    payBtn.setAttribute("aria-disabled", "false");
+    payBtn.textContent = "Continuer vers le paiement →";
+
+    try { sessionStorage.setItem("locker_choisi", JSON.stringify({ref: ref, nom: nom})); } catch(e) {}
+  }
+
+  if(typeof jQuery === "undefined" || !jQuery.fn.MR_ParcelShopPicker){
+    showAlert("La carte Mondial Relay ne s'est pas chargée. Vérifie ta connexion puis recharge la page.");
+    return;
+  }
+
+  jQuery("#Zone_Widget").MR_ParcelShopPicker({
+    Target: "#Retour_Widget",
+    Brand: CONFIG.BRAND,
+    Country: "FR",
+    AllowedCountries: CONFIG.PAYS,
+    PostCode: cp,
+    ColLivMod: CONFIG.MODE,
+    NbResults: "10",
+    Responsive: true,
+    ShowResultsOnMap: true,
+    DisplayMapInfo: true,
+    EnableGeolocalisatedSearch: true,
+    Theme: "mondialrelay",
+    OnParcelShopSelected: setChoice,
+    OnNoResultReturned: function(){
+      showAlert("Aucun locker trouvé pour cette recherche. Essaie un code postal voisin.");
+    },
+    OnSearchSuccess: function(){ showAlert(""); }
+  });
+})();
+</script>
+</body>
+</html>
